@@ -26,11 +26,9 @@ jobs:
           - image: "archlinux:latest"
             pre: ""
             experimental: false
-          # musl: some tool wheels (serena deps) may lack prebuilt alpine wheels.
-          # Reported, but does not gate the build.
-          - image: "alpine:latest"
-            pre: "apk add --no-cache bash"
-            experimental: true
+          # Alpine (musl) is intentionally not tested: onnxruntime (headroom) and
+          # @ast-grep/cli ship no musllinux wheels, so they cannot install without a
+          # from-source build. install-unix keeps an apk branch for users who want to try.
     continue-on-error: ${{ matrix.experimental }}
     steps:
       - uses: actions/checkout@v4

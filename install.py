@@ -23,13 +23,13 @@ def noderun(name):
     return [p]
 # winget "already installed / no applicable upgrade / no newer version" exit codes (benign no-ops).
 WINGET_BENIGN=(0x8A15002B,0x8A15010D,0x8A15010E)
-def step(label, argv, timeout=900, cwd=None, ok_codes=(0,)):
+def step(label, argv, timeout=900, cwd=None, ok_codes=(0,), env=None):
     print('>>',label,flush=True)
     try:
         # errors='replace': tool output is often not valid in the Windows ANSI code page (cp1252),
         # which would otherwise crash the capture reader thread and lose the result.
         p=subprocess.run([str(a) for a in argv], cwd=cwd, capture_output=True,
-                         encoding='utf-8', errors='replace', timeout=timeout)
+                         encoding='utf-8', errors='replace', timeout=timeout, env=env)
         detail=((p.stdout or '')+'\n'+(p.stderr or '')).strip()[-2200:]
         okset={c & 0xFFFFFFFF for c in ok_codes}; ok=(p.returncode & 0xFFFFFFFF) in okset
     except Exception as e: ok=False;detail=str(e)
@@ -119,7 +119,15 @@ def main():
         # (not skip-if-present) so an older local copy is upgraded, not skipped. See VETTING.md.
         npm_missing.append('repomix@1.18.1')
         npm=noderun('npm');npx=noderun('npx')
-        step('Node command-line utilities',[*npm,'install','-g',*npm_missing],timeout=1200)
+        # On Unix, apt/dnf node sets npm's global prefix to /usr, so `npm -g` writes bins into
+        # /usr/bin -- needs root and collides with system bins (e.g. @ast-grep/cli's `sg` vs
+        # /usr/bin/sg). Install into ~/.local instead: no root, no collision, and ~/.local/bin
+        # is already the path cmd()/verify.py resolve. Windows (%APPDATA%\npm) is left alone.
+        npm_env=None
+        if sys.platform!='win32':
+            (H/'.local'/'bin').mkdir(parents=True,exist_ok=True)
+            npm_env={**os.environ,'npm_config_prefix':str(H/'.local')}
+        step('Node command-line utilities',[*npm,'install','-g',*npm_missing],timeout=1200,env=npm_env)
         if sys.platform=='win32':step('RTK Windows',['winget','install','--id','rtk-ai.rtk','--exact','--accept-source-agreements','--accept-package-agreements','--disable-interactivity'],ok_codes=(0,*WINGET_BENIGN))
         elif sys.platform=='darwin':step('RTK macOS',['brew','install','rtk-ai/tap/rtk'])
         else:
@@ -185,7 +193,7 @@ def main():
             step('Roam source indexer',['uv','tool','install','roam-code==14.1.0'])
             step('Headroom proxy',['uv','tool','install','headroom-ai[proxy,mcp]==0.42.0'])
             if cmd('context-mode'):mark('Context Mode','ok','Already present')
-            else:step('Context Mode',[*noderun('npm'),'install','-g','context-mode@1.0.169'])
+            else:step('Context Mode',[*noderun('npm'),'install','-g','context-mode@1.0.169'],env=npm_env)
         if not args.no_context7:
             # Context7 is a REMOTE MCP. Never run interactive ctx7 setup here.
             # An existing configuration is a successful no-op; do not touch authentication.

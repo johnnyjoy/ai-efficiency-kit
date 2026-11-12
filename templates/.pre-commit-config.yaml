@@ -1,0 +1,17 @@
+# Secret-scanning pre-commit baseline for repos where you run coding agents.
+# Copy to your repo root as .pre-commit-config.yaml, then:  pre-commit install
+# Requires: pipx install pre-commit  (or pip install pre-commit)
+# gitleaks catches secrets before an agent (or you) can commit them.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace

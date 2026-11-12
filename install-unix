@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.local/share/mise/shims:$PATH"
+fail(){ printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+warn(){ printf 'WARN: %s\n' "$*" >&2; }
+
+# Privilege helper shared by every Linux package manager.
+setup_sudo(){
+  if [[ "$(id -u)" == 0 ]]; then SUDO=(); else command -v sudo >/dev/null || fail 'sudo missing'; SUDO=(sudo); fi
+}
+
+if [[ "$(uname -s)" == Darwin ]]; then
+  if ! command -v brew >/dev/null 2>&1; then
+    command -v curl >/dev/null || fail 'curl missing; install macOS command line tools first'
+    command -v git >/dev/null || xcode-select --install || true
+    printf 'Bootstrapping Homebrew (may request administrator approval)\n'
+    # nosemgrep: bash.curl.security.curl-pipe-bash.curl-pipe-bash -- official Homebrew bootstrap; no package-manager alternative exists to install Homebrew itself. HTTPS, canonical Homebrew repo. Accepted risk (see VETTING.md).
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    for candidate in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+      if [[ -x $candidate ]]; then eval "\"$candidate\" shellenv"; break; fi
+    done
+  fi
+  command -v brew >/dev/null || fail 'Homebrew bootstrap failed'
+  brew install git curl node uv ripgrep fd jq yq bat fzf sd git-delta hyperfine universal-ctags tree-sitter-cli ast-grep shellcheck watchexec
+elif command -v apt-get >/dev/null 2>&1; then
+  [[ -f /etc/os-release ]] && . /etc/os-release
+  [[ "${ID:-}" == ubuntu || " ${ID_LIKE:-} " == *' ubuntu '* || " ${ID_LIKE:-} " == *' debian '* || "${ID:-}" == debian ]] || fail 'Expected Ubuntu/Debian/WSL or macOS'
+  setup_sudo
+  "${SUDO[@]}" apt-get update
+  "${SUDO[@]}" apt-get install -y ca-certificates curl git python3 python3-venv ripgrep fd-find jq bat fzf universal-ctags shellcheck
+  for pkg in sd git-delta hyperfine watchexec; do "${SUDO[@]}" apt-get install -y "$pkg" || warn "$pkg unavailable via apt"; done
+elif command -v dnf >/dev/null 2>&1; then
+  setup_sudo
+  # RHEL/Rocky/Alma keep ripgrep/fd-find in EPEL, not base; Fedora has them already.
+  if [ -f /etc/redhat-release ] && ! grep -qi fedora /etc/redhat-release && ! rpm -q epel-release >/dev/null 2>&1; then
+    "${SUDO[@]}" dnf install -y epel-release || warn 'epel-release unavailable; ripgrep/fd-find may be missing'
+  fi
+  "${SUDO[@]}" dnf install -y ca-certificates curl git python3 ripgrep fd-find jq bat fzf ctags
+  # Best-effort: names/availability drift across Fedora/RHEL/EPEL releases (sd is absent on Fedora).
+  for pkg in ShellCheck sd git-delta hyperfine watchexec; do "${SUDO[@]}" dnf install -y "$pkg" || warn "$pkg unavailable via dnf"; done
+elif command -v pacman >/dev/null 2>&1; then
+  setup_sudo
+  # -Syu, not -Sy: refreshing without a full upgrade then installing risks a partial upgrade.
+  "${SUDO[@]}" pacman -Syu --noconfirm
+  "${SUDO[@]}" pacman -S --needed --noconfirm ca-certificates curl git python ripgrep fd jq bat fzf ctags uv nodejs npm
+  for pkg in shellcheck sd git-delta hyperfine watchexec; do "${SUDO[@]}" pacman -S --needed --noconfirm "$pkg" || warn "$pkg unavailable via pacman"; done
+elif command -v zypper >/dev/null 2>&1; then
+  setup_sudo
+  "${SUDO[@]}" zypper --non-interactive install ca-certificates curl git python3 ripgrep fd jq bat fzf ctags nodejs npm
+  for pkg in ShellCheck sd git-delta hyperfine watchexec; do "${SUDO[@]}" zypper --non-interactive install "$pkg" || warn "$pkg unavailable via zypper"; done
+elif command -v apk >/dev/null 2>&1; then
+  setup_sudo
+  # Default Alpine activates only 'main'; ripgrep/fd/bat/fzf live in 'community'.
+  if ! grep -qE '^[^#].*/community$' /etc/apk/repositories 2>/dev/null; then
+    v=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null)
+    echo "https://dl-cdn.alpinelinux.org/alpine/v${v}/community" | "${SUDO[@]}" tee -a /etc/apk/repositories >/dev/null
+    "${SUDO[@]}" apk update
+  fi
+  "${SUDO[@]}" apk add --no-cache ca-certificates curl git python3 ripgrep fd jq bat fzf ctags nodejs npm
+  # Alpine's apk 'delta' is NOT git-delta; omit it and let the cargo fallback build git-delta.
+  for pkg in shellcheck sd hyperfine watchexec; do "${SUDO[@]}" apk add --no-cache "$pkg" || warn "$pkg unavailable via apk"; done
+else
+  fail 'Supported systems: macOS, or Linux with apt-get, dnf, pacman, zypper, or apk'
+fi
+
+if [[ "$(uname -s)" != Darwin ]]; then
+  # Debian/Ubuntu ship fd/bat as fdfind/batcat; expose canonical names. No-op elsewhere.
+  mkdir -p "$HOME/.local/bin"
+  for item in 'fdfind fd' 'batcat bat'; do
+    read -r source target <<<"$item"
+    if command -v "$source" >/dev/null && ! command -v "$target" >/dev/null; then
+      ln -sfn "$(command -v "$source")" "$HOME/.local/bin/$target"
+    fi
+  done
+  if ! command -v uv >/dev/null; then
+    curl -fsSL https://astral.sh/uv/install.sh -o /tmp/ai-kit-uv-install.sh
+    sh /tmp/ai-kit-uv-install.sh
+  fi
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  command -v uv >/dev/null || fail 'uv bootstrap did not add uv to PATH'
+  # Node >=22 required for the npm-global tooling in install.py.
+  if ! command -v node >/dev/null || ! node -e 'process.exit(Number(process.versions.node.split(".")[0])>=22?0:1)' 2>/dev/null; then
+    if command -v apt-get >/dev/null 2>&1; then
+      curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/ai-kit-nodesource.sh
+      "${SUDO[@]}" bash /tmp/ai-kit-nodesource.sh
+      "${SUDO[@]}" apt-get install -y nodejs
+    elif command -v dnf >/dev/null 2>&1; then
+      curl -fsSL https://rpm.nodesource.com/setup_22.x -o /tmp/ai-kit-nodesource.sh
+      "${SUDO[@]}" bash /tmp/ai-kit-nodesource.sh
+      "${SUDO[@]}" dnf install -y nodejs
+    else
+      warn 'node >=22 not found; distro node kept. npm-global steps may fail.'
+    fi
+  fi
+  # Cargo is optional: a failed optional install must not prevent the main setup.
+  if ! command -v cargo >/dev/null; then
+    if command -v apt-get >/dev/null 2>&1; then "${SUDO[@]}" apt-get install -y cargo rustc || warn 'cargo unavailable'
+    elif command -v dnf >/dev/null 2>&1; then "${SUDO[@]}" dnf install -y cargo rust || warn 'cargo unavailable'
+    elif command -v pacman >/dev/null 2>&1; then "${SUDO[@]}" pacman -S --needed --noconfirm rust || warn 'cargo unavailable'
+    elif command -v zypper >/dev/null 2>&1; then "${SUDO[@]}" zypper --non-interactive install cargo || warn 'cargo unavailable'
+    elif command -v apk >/dev/null 2>&1; then "${SUDO[@]}" apk add --no-cache cargo || warn 'cargo unavailable'
+    fi
+  fi
+  if command -v cargo >/dev/null; then
+    for spec in 'sd:sd' 'git-delta:delta' 'watchexec-cli:watchexec' 'hyperfine:hyperfine'; do
+      crate="${spec%%:*}"; binary="${spec##*:}"
+      command -v "$binary" >/dev/null || cargo install --locked "$crate" || warn "$crate unavailable"
+    done
+  fi
+fi
+
+command -v uv >/dev/null && command -v node >/dev/null && command -v npm >/dev/null || fail 'Bootstrap missing uv/node/npm'
+uv python install 3.13
+uv run --no-project --python 3.13 python install.py "$@"

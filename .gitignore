@@ -1,0 +1,54 @@
+# ── ai-efficiency-kit generated artifacts ────────────────────────────
+# install-report.json: written by install.py on each run (machine-specific)
+install-report.json
+# caveman-compress backups
+*.original.md
+# config backups the installer/uninstaller write
+*.bak-ai-kit-*
+
+# ── Python ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# ── Node (e.g. .opencode/) ───────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ── Secrets / credentials (never commit — this is a security kit) ─────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+id_rsa*
+id_ed25519*
+.netrc
+
+# ── Local agent/tool state (keep shared config, drop machine-local) ──
+.claude/settings.local.json
+.claude/*.local.json
+.serena/cache/
+.serena/memories/
+.serena/project.local.yml
+
+# ── Editor / OS cruft ────────────────────────────────────────────────
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
+
+# ── Logs ─────────────────────────────────────────────────────────────
+*.log

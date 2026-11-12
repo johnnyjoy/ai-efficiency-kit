@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Vetting gate for ai-efficiency-kit. Runs the automated layer of the process in VETTING.md:
+# bundled-skill hygiene + secret scan + Semgrep + (optional) Snyk Agent Scan.
+# Exits non-zero on any finding so it can gate CI. Human review (VETTING.md) is still required.
+set -uo pipefail
+cd "$(dirname "$0")"
+fail=0
+note(){ printf '\n=== %s ===\n' "$*"; }
+bad(){ printf 'FAIL: %s\n' "$*" >&2; fail=1; }
+
+note "1. Shipped skills must not contain remote-pipe-to-shell installers"
+# Executable one-liners only (a real URL piped into a shell), not prose that mentions them.
+if grep -rnE 'https?://[^ ]+ *\| *(sh|bash)|irm +https?://[^ ]+ *\| *iex' skills/ 2>/dev/null; then
+  bad "remote install one-liner found in skills/ — use a package manager instead"
+else
+  echo "ok: no curl|bash / irm|iex installers in skills/"
+fi
+
+note "2. Secret scan (skills/, configs/, install scripts)"
+if grep -rnE 'AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]+|sk-[A-Za-z0-9]{20,}' \
+     skills/ configs/ hooks/ install.py uninstall.py verify.py install-unix install-windows.ps1 2>/dev/null; then
+  bad "possible hardcoded secret"
+else
+  echo "ok: no secret patterns"
+fi
+
+note "3. Semgrep (bundled scripts + installers)"
+if command -v semgrep >/dev/null 2>&1; then
+  semgrep --error --quiet --config auto skills/ hooks/ install.py uninstall.py verify.py install-unix 2>/dev/null || bad "semgrep findings"
+else
+  echo "SKIP: semgrep not installed (pip install semgrep)"
+fi
+
+note "4. Snyk Agent Scan (skills + MCP configs)"
+if [ -n "${SNYK_TOKEN:-}" ] && command -v uvx >/dev/null 2>&1; then
+  # Pinned tool version; --ci exits non-zero on findings. MCP servers are NOT started here.
+  uvx snyk-agent-scan@0.6 --ci || bad "snyk-agent-scan findings"
+else
+  echo "SKIP: set SNYK_TOKEN and install uv to run Snyk Agent Scan"
+fi
+
+note "Result"
+if [ "$fail" -ne 0 ]; then echo "VET FAILED — see findings above."; exit 1; fi
+echo "VET PASSED (automated layer). Human review per VETTING.md still required."

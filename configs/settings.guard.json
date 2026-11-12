@@ -1,0 +1,13 @@
+{
+  "_comment": "Reference template. The installer's --guard flag copies hooks/guard-pretooluse.py to a stable path and appends this PreToolUse entry to ~/.claude/settings.json WITHOUT clobbering existing hooks. To wire it manually, replace GUARD_PATH with the absolute path to guard-pretooluse.py and merge this into your settings.json. It is a deny-list safety net, not a sandbox.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|Edit|Write|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "python3 -I \"GUARD_PATH\"" }
+        ]
+      }
+    ]
+  }
+}

@@ -14,11 +14,24 @@ def cmd(name):
             q=base/(name+suffix)
             if q.is_file(): return str(q)
     return None
-def step(label, argv, timeout=900, cwd=None):
+def noderun(name):
+    """Runnable argv prefix for an npm-family CLI. Windows npm/npx are .cmd wrappers;
+    CreateProcess cannot exec a .cmd directly, so route through cmd /c."""
+    p=cmd(name)
+    if not p: return None
+    if sys.platform=='win32' and p.lower().endswith(('.cmd','.bat')): return ['cmd','/c',p]
+    return [p]
+# winget "already installed / no applicable upgrade / no newer version" exit codes (benign no-ops).
+WINGET_BENIGN=(0x8A15002B,0x8A15010D,0x8A15010E)
+def step(label, argv, timeout=900, cwd=None, ok_codes=(0,)):
     print('>>',label,flush=True)
     try:
-        p=subprocess.run([str(a) for a in argv], cwd=cwd, capture_output=True,text=True,timeout=timeout)
-        detail=(p.stdout+'\n'+p.stderr).strip()[-2200:]; ok=p.returncode==0
+        # errors='replace': tool output is often not valid in the Windows ANSI code page (cp1252),
+        # which would otherwise crash the capture reader thread and lose the result.
+        p=subprocess.run([str(a) for a in argv], cwd=cwd, capture_output=True,
+                         encoding='utf-8', errors='replace', timeout=timeout)
+        detail=((p.stdout or '')+'\n'+(p.stderr or '')).strip()[-2200:]
+        okset={c & 0xFFFFFFFF for c in ok_codes}; ok=(p.returncode & 0xFFFFFFFF) in okset
     except Exception as e: ok=False;detail=str(e)
     RESULT.append({'item':label,'status':'ok' if ok else 'failed','detail':detail})
     if not ok: print('FAILED:',label,detail[-400:],flush=True)
@@ -105,8 +118,9 @@ def main():
         # repomix pinned ==1.18.1 (>=1.14.1 closes CVE-2026-49987, an 8.8 RCE) and ALWAYS installed
         # (not skip-if-present) so an older local copy is upgraded, not skipped. See VETTING.md.
         npm_missing.append('repomix@1.18.1')
-        step('Node command-line utilities',['npm','install','-g',*npm_missing],timeout=1200)
-        if sys.platform=='win32':step('RTK Windows',['winget','install','--id','rtk-ai.rtk','--exact','--accept-source-agreements','--accept-package-agreements','--disable-interactivity'])
+        npm=noderun('npm');npx=noderun('npx')
+        step('Node command-line utilities',[*npm,'install','-g',*npm_missing],timeout=1200)
+        if sys.platform=='win32':step('RTK Windows',['winget','install','--id','rtk-ai.rtk','--exact','--accept-source-agreements','--accept-package-agreements','--disable-interactivity'],ok_codes=(0,*WINGET_BENIGN))
         elif sys.platform=='darwin':step('RTK macOS',['brew','install','rtk-ai/tap/rtk'])
         else:
             # Pin the installer script to a release tag (not master) and pin the version it fetches. See VETTING.md.
@@ -122,10 +136,10 @@ def main():
         if installer.exists():step('Caveman detected-agent integration',['node',installer,'--all','--non-interactive'],timeout=1200)
         else:mark('Caveman','failed','Upstream installer not found')
         for label,slug in [('Ponytail','DietrichGebert/ponytail'),('Context Canary and Loop Factory','JuliusBrussee/skills')]:
-            step(label+' global skills',['npx','-y','skills','add',slug,'--global','--yes'],timeout=1200)
+            step(label+' global skills',[*npx,'-y','skills','add',slug,'--global','--yes'],timeout=1200)
         # token-saviour: install the kit-vetted local fork (upstream curl|bash + hook-wiring removed). See VETTING.md.
         ts=ROOT/'skills'/'token-saviour'
-        if (ts/'SKILL.md').exists():step('token-saviour (kit-vetted) global skill',['npx','-y','skills','add',str(ts),'--global','--yes'],timeout=1200)
+        if (ts/'SKILL.md').exists():step('token-saviour (kit-vetted) global skill',[*npx,'-y','skills','add',str(ts),'--global','--yes'],timeout=1200)
         else:mark('token-saviour','failed','Kit-local skill missing at '+str(ts))
         ben=repo('JetBrains/benjamin-plus-skill')/'injected-instruction.md'
         if ben.exists():
@@ -171,7 +185,7 @@ def main():
             step('Roam source indexer',['uv','tool','install','roam-code==14.1.0'])
             step('Headroom proxy',['uv','tool','install','headroom-ai[proxy,mcp]==0.42.0'])
             if cmd('context-mode'):mark('Context Mode','ok','Already present')
-            else:step('Context Mode',['npm','install','-g','context-mode@1.0.169'])
+            else:step('Context Mode',[*noderun('npm'),'install','-g','context-mode@1.0.169'])
         if not args.no_context7:
             # Context7 is a REMOTE MCP. Never run interactive ctx7 setup here.
             # An existing configuration is a successful no-op; do not touch authentication.

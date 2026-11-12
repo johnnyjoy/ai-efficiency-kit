@@ -24,6 +24,7 @@ if [[ "$(uname -s)" == Darwin ]]; then
   command -v brew >/dev/null || fail 'Homebrew bootstrap failed'
   brew install git curl node uv ripgrep fd jq yq bat fzf sd git-delta hyperfine universal-ctags tree-sitter-cli ast-grep shellcheck watchexec
 elif command -v apt-get >/dev/null 2>&1; then
+  # shellcheck source=/dev/null
   [[ -f /etc/os-release ]] && . /etc/os-release
   [[ "${ID:-}" == ubuntu || " ${ID_LIKE:-} " == *' ubuntu '* || " ${ID_LIKE:-} " == *' debian '* || "${ID:-}" == debian ]] || fail 'Expected Ubuntu/Debian/WSL or macOS'
   setup_sudo
@@ -110,6 +111,6 @@ if [[ "$(uname -s)" != Darwin ]]; then
   fi
 fi
 
-command -v uv >/dev/null && command -v node >/dev/null && command -v npm >/dev/null || fail 'Bootstrap missing uv/node/npm'
+for tool in uv node npm; do command -v "$tool" >/dev/null || fail 'Bootstrap missing uv/node/npm'; done
 uv python install 3.13
 uv run --no-project --python 3.13 python install.py "$@"

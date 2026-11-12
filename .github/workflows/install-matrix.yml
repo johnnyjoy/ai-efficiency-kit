@@ -1,0 +1,64 @@
+name: install-matrix
+
+# End-to-end install across Linux distros: install-unix -> install.py -> verify.py.
+# Heavy (network: PyPI, npm, GitHub, winget-equivalents). Runs each distro in its own
+# container via `docker run` to avoid checkout-in-container flakiness on non-Debian bases.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: "ubuntu:24.04"
+            pre: ""
+            experimental: false
+          - image: "fedora:latest"
+            pre: ""
+            experimental: false
+          - image: "archlinux:latest"
+            pre: ""
+            experimental: false
+          # musl: some tool wheels (serena deps) may lack prebuilt alpine wheels.
+          # Reported, but does not gate the build.
+          - image: "alpine:latest"
+            pre: "apk add --no-cache bash"
+            experimental: true
+    continue-on-error: ${{ matrix.experimental }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install and verify in ${{ matrix.image }}
+        run: |
+          docker run --rm -v "$PWD":/kit -w /kit "${{ matrix.image }}" sh -c '
+            set -e
+            ${{ matrix.pre }}
+            bash install-unix
+            export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+            python3 install.py
+            python3 verify.py
+          '
+
+  windows:
+    # windows-2025 ships winget preinstalled; the installer also self-heals it via
+    # Microsoft.WinGet.Client + Repair-WinGetPackageManager if the image lacks it.
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # One step: tools installed here update the registry PATH, which a later step's
+      # fresh process would not see. Refresh PATH in-process before verify.py (shutil.which).
+      - name: Install and verify (call .ps1 directly; .bat has an interactive pause)
+        shell: pwsh
+        run: |
+          .\install-windows.ps1 -Guard -Enforce
+          $env:PATH = "$env:USERPROFILE\.local\bin;$env:APPDATA\npm;$env:LOCALAPPDATA\Microsoft\WinGet\Links;" +
+            [Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
+            [Environment]::GetEnvironmentVariable('Path','User')
+          python verify.py

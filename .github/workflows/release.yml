@@ -1,0 +1,43 @@
+name: release
+
+# Pushing a version tag (vMAJOR.MINOR.PATCH) gates on the vetting + syntax checks,
+# then publishes a GitHub Release with auto-generated notes and a clean source archive.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write  # required for `gh release create`
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Gate on vetting and syntax
+        run: |
+          python -m pip install --upgrade pip
+          pip install semgrep
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          python -m py_compile install.py uninstall.py verify.py hooks/*.py
+          shellcheck install-unix vet-skills
+          bash vet-skills
+
+      - name: Build source archive
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          git archive --format=tar.gz --prefix="ai-efficiency-kit-${TAG}/" -o "ai-efficiency-kit-${TAG}.tar.gz" HEAD
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" "ai-efficiency-kit-${TAG}.tar.gz" \
+            --title "$TAG" --generate-notes

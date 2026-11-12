@@ -3,7 +3,7 @@
 # bundled-skill hygiene + secret scan + Semgrep + (optional) Snyk Agent Scan.
 # Exits non-zero on any finding so it can gate CI. Human review (VETTING.md) is still required.
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 fail=0
 note(){ printf '\n=== %s ===\n' "$*"; }
 bad(){ printf 'FAIL: %s\n' "$*" >&2; fail=1; }
